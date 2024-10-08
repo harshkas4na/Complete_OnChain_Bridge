@@ -43,7 +43,7 @@ export default function App() {
   const [theme, setTheme] = useState('dark');
   const [activeTab, setActiveTab] = useState('bridge');
   const [tokenType, setTokenType] = useState('native');
-  const [fromChain, setFromChain] = useState('Kopli');
+  const [fromChain, setFromChain] = useState('Sepolia');
   const [toChain, setToChain] = useState('Kopli');
   const [fromToken, setFromToken] = useState('REACT1');
   const [toToken, setToToken] = useState('REACT2');
@@ -106,12 +106,21 @@ export default function App() {
     setIsLoading(true);
     try {
       let tx;
-      if (network === 'sepolia') {
+      const { ethereum } = window;
+      if (!ethereum) {
+        alert("Please install MetaMask!");
+        return;
+      }
+ 
+      const tempProvider = new ethers.providers.Web3Provider(ethereum);
+  
+      const network = await tempProvider.getNetwork();
+      if (network.chainId === 11155111) {
         const sepContract = new ethers.Contract(contractAddressForSep, bridgeABI, signer);
         tx = await sepContract.addLiquidity({
           value: ethers.utils.parseEther(liquidityAmount),
         });
-      } else if (network === 'kopli') {
+      } else if (network.chainId === 5318008) {
         const kopContract = new ethers.Contract(contractAddressForKop, bridgeABI, signer);
         tx = await kopContract.addLiquidity({
           value: ethers.utils.parseEther(liquidityAmount),
@@ -130,19 +139,21 @@ export default function App() {
       setIsLoading(false);
     }
   };
-  
   const handleRemoveLiquidity = async () => {
-    if (!removeLiquidityAmount) {
-      alert("Please enter the amount to remove as liquidity.");
-      return;
-    }
     setIsLoading(true);
     try {
       let tx;
-      if (network === 'sepolia') {
+      const { ethereum } = window;
+      if (!ethereum) {
+        alert("Please install MetaMask!");
+        return;
+      }
+      const tempProvider = new ethers.providers.Web3Provider(ethereum);
+      const network = await tempProvider.getNetwork();
+      if (network.chainId === 11155111) {
         const sepContract = new ethers.Contract(contractAddressForSep, bridgeABI, signer);
         tx = await sepContract.removeLiquidity(ethers.utils.parseEther(removeLiquidityAmount));
-      } else if (network === 'kopli') {
+      } else if (network.chainId === 5318008) {
         const kopContract = new ethers.Contract(contractAddressForKop, bridgeABI, signer);
         tx = await kopContract.removeLiquidity(ethers.utils.parseEther(removeLiquidityAmount));
       } else {
@@ -547,7 +558,7 @@ export default function App() {
       case '0xaa36a7':
         newNetwork = 'Sepolia';
         break;
-      case '5318008':
+      case '0x512578':
         newNetwork = 'Kopli';
         break;
       
