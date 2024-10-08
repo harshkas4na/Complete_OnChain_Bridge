@@ -9,6 +9,12 @@ import NFTDestination from './contract/NFTDestination.json';
 
 const contractAddressForSep = "0x0b3F3Aa0b70AAd88733fd44Ad235f9283B00d931";
 const contractAddressForKop = "0x4218c0deAd65bc2D85a9681A96f8E769B754f603";
+//""""based on Chain selected 
+//1) Sepolia 1}AddLiquidity RemoveLiquidity will function for that origin chain contract(ABI is same only the address different)
+            //2} InitiateBridge will run based on the chain selected in From chain
+            //3} That from & To chain will change based on the chain selected automatically """"
+
+
 const tokenAddressForSep = "0xC891d076e8cf7c3c9D64fCf23832ea6C7C80c8F0";
 const tokenAddressForKop= "0x8D4ab1B62B65bF6c97d13F2caBE51E580F778d35";
 const erc721OriginBridgeAddress = "0x0b3F3Aa0b70AAd88733fd44Ad235f9283B00d931";
@@ -154,27 +160,7 @@ export default function App() {
     }
   };
   
-  const handleChainChanged = (chainId) => {
-    setNetwork(chainId);
-    // Reconnect to the new chain
-    connectWallet();
-  };
-
-  const chains = ['Kopli', 'Sepolia'];
-  const tokens = {
-    'native': {
-      'Kopli': ['REACT1', 'REACT2'],
-      'Sepolia': ['Sepolia1', 'Sepolia2']
-    },
-    'erc20': {
-      'Kopli': [ 'PRKR'],
-      'Sepolia': ['IVAN']
-    },
-    'erc721': {
-      'Kopli': ['CryptoPunks'],
-      'Sepolia': ['Aurory'],
-    }
-  };
+  
 
   const toggleTheme = () => {
     setTheme(theme === 'light' ? 'dark' : 'light');
@@ -190,18 +176,29 @@ export default function App() {
       const accounts = await ethereum.request({ method: 'eth_requestAccounts' });
       setAccount(accounts[0]);
       setWalletConnected(true);
-      
+  
       const tempProvider = new ethers.providers.Web3Provider(ethereum);
       const tempSigner = tempProvider.getSigner();
-      const tempContract = new ethers.Contract(contractAddress, bridgeABI, tempSigner);
-      
+  
+      const network = await tempProvider.getNetwork();
+      let tempContract;
+      let networkName;
+  
+      if (network.chainId === 11155111) { // Sepolia
+        tempContract = new ethers.Contract(contractAddressForSep, bridgeABI, tempSigner);
+        networkName = "Sepolia";
+      } else if (network.chainId === 5318008) { // Kopli
+        tempContract = new ethers.Contract(contractAddressForKop, bridgeABI, tempSigner);
+        networkName = "Kopli";
+      } else {
+        throw new Error("Unsupported network");
+      }
+  
       setProvider(tempProvider);
       setSigner(tempSigner);
       setContract(tempContract);
-
-      const network = await tempProvider.getNetwork();
-      setNetwork(network.name);
-
+      setNetwork(networkName);
+  
       // Fetch initial contract data
       fetchContractData(tempContract);
     } catch (error) {
@@ -209,6 +206,68 @@ export default function App() {
       setError("Failed to connect wallet. Please try again.");
     }
   };
+
+  function TransactionHistory() {
+    const [sepoliaHistory, setSepoliaHistory] = useState([]);
+    const [loading, setLoading] = useState(true);
+  
+    useEffect(() => {
+      async function fetchHistory() {
+        try {
+          const sepoliaProvider = new ethers.providers.AlchemyProvider("sepolia", "hjMSBvX0yQSgvuxY3AuO5W9yqlERL0LF");  
+          const signer = sepoliaProvider.getSigner();
+          const userAddress = await signer.getAddress();
+          const sepoliaResults = await getTransactionHistory(contractAddressForSep, sepoliaProvider, userAddress);
+  
+          setSepoliaHistory(sepoliaResults);
+        } catch (error) {
+          console.error("Error fetching history:", error);
+        } finally {
+          setLoading(false);
+        }
+      }
+  
+      fetchHistory();
+    }, []);
+  
+    if (loading) {
+      return <div>Loading transaction history...</div>;
+    }
+  
+    return (
+      <div className="space-y-6">
+        <h2>Sepolia Transactions</h2>
+        <ul>
+          {sepoliaHistory.map((tx, index) => (
+            <li key={index}>
+              Hash: {tx.transactionHash.slice(0, 10)}...
+              Amount: {tx.amount} ETH
+              Fee: {tx.fee} ETH
+              ID: {tx.txId}
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+
+  async function getTransactionHistory(contractAddress, provider, userAddress) {
+    const contract = new ethers.Contract(contractAddress, bridgeABI, provider);
+    
+    const filter = contract.filters.Deposit(userAddress);
+    
+    const currentBlock = await provider.getBlockNumber();
+    const fromBlock = Math.max(0, currentBlock - 1000);
+    
+    const events = await contract.queryFilter(filter, fromBlock);
+    
+    return events.map(event => ({
+      transactionHash: event.transactionHash,
+      amount: ethers.utils.formatEther(event.args.bridgeAmount),
+      fee: ethers.utils.formatEther(event.args.fee),
+      txId: event.args.txId.toString()
+    }));
+  }
 
   const handleAmountChange = (e) => {
     const inputAmount = e.target.value;
@@ -255,7 +314,7 @@ export default function App() {
     try {
       const tokenAddress = tokenAddresses[fromToken];
       const tokenContract = new ethers.Contract(tokenAddress,originBridgeABI, signer);
-      const tx = await tokenContract.approve(contractAddress, ethers.utils.parseEther(approveAmount));
+      const tx = await tokenContract.approve(contractAddressForSep, ethers.utils.parseEther(approveAmount));
       await tx.wait();
       alert("Approval successful!");
       setApproveAmount('');
@@ -325,7 +384,7 @@ export default function App() {
     try {
       const nftContract = new ethers.Contract(tokenAddress, erc721ABI, signer);
       const approvedAddress = await nftContract.getApproved(tokenId);
-      return approvedAddress.toLowerCase() === contractAddress.toLowerCase();
+      return approvedAddress.toLowerCase() === tokenAddressForSep.toLowerCase();
     } catch (error) {
       console.error("Error checking approval:", error);
       return false;
@@ -341,7 +400,7 @@ export default function App() {
     try {
       const nftAddress = getNFTAddress(fromChain, fromToken);
       const nftContract = new ethers.Contract(nftAddress, erc721ABI, signer);
-      const tx = await nftContract.approve(contractAddress, tokenId);
+      const tx = await nftContract.approve(NFT_OriginBridgeSepolia, tokenId);
       await tx.wait();
       alert("NFT approved successfully!");
       setApprovalStatus({ ...approvalStatus, [tokenId]: true });
@@ -361,6 +420,22 @@ export default function App() {
     setIsLoading(true);
     try {
       let tx;
+      if (tokenType === 'native') {
+        // Determine which contract address to use based on the selected chain
+        const contractAddress = fromChain === 'Sepolia' ? contractAddressForSep : contractAddressForKop;
+        
+        // Create contract instance
+        const contract = new ethers.Contract(contractAddress, bridgeABI, signer);
+        
+        // Calculate txId (you may need to adjust this based on your specific requirements)
+        const calculatedTxnId = calculateTxnId(account, amount);
+
+        
+        // Call the deposit function
+        tx = await contract.deposit(calculatedTxnId, {
+          value: ethers.utils.parseEther(amount),
+        });
+      } 
       if (tokenType === 'erc721') {
         const nftAddress = getNFTAddress(fromChain, fromToken);
         const isApproved = await checkApproval(nftAddress, tokenId);
@@ -393,7 +468,7 @@ export default function App() {
         const tokenContract = new ethers.Contract(tokenAddress, originBridgeABI, signer);
         
         // First, approve the bridge contract to spend tokens
-        const approveTx = await tokenContract.approve(contractAddress, ethers.utils.parseEther(amount));
+        const approveTx = await tokenContract.approve(tokenAddressForSep, ethers.utils.parseEther(amount));
         await approveTx.wait();
         
         // Generate a unique transaction ID
@@ -406,12 +481,6 @@ export default function App() {
           toChain === 'Sepolia' ? tokenAddressForSep : tokenAddressForKop, // Use the appropriate address for the destination chain
           txId
         );
-      } else if (tokenType === 'native') {
-        // For native tokens (existing logic)
-        const calculatedTxnId = calculateTxnId(account, amount);
-        tx = await contract.deposit(calculatedTxnId, {
-          value: ethers.utils.parseEther(amount),
-        });
       } else {
         // For ERC721 tokens (You may need to implement this part)
         throw new Error("ERC721 bridging not implemented yet");
@@ -453,6 +522,60 @@ export default function App() {
 
   const shortenAddress = (address) => {
     return `${address.slice(0, 6)}...${address.slice(-4)}`;
+  };
+
+  useEffect(() => {
+    if (window.ethereum) {
+      window.ethereum.on('accountsChanged', handleAccountsChanged);
+      window.ethereum.on('chainChanged', handleChainChanged);
+    }
+
+    return () => {
+      if (window.ethereum) {
+        window.ethereum.removeListener('accountsChanged', handleAccountsChanged);
+        window.ethereum.removeListener('chainChanged', handleChainChanged);
+      }
+    };
+  }, []);
+
+
+  const handleChainChanged = (chainId) => {
+    // Convert chainId to network name
+    let newNetwork;
+    console.log(chainId)
+    switch (chainId) {
+      case '0xaa36a7':
+        newNetwork = 'Sepolia';
+        break;
+      case '5318008':
+        newNetwork = 'Kopli';
+        break;
+      
+    }
+    setNetwork(newNetwork);
+    
+    // Update fromChain and toChain based on the new network
+    setFromChain(newNetwork);
+    setToChain(newNetwork === 'Sepolia' ? 'Kopli' : 'Sepolia');
+    
+    // Update fromToken and toToken based on the new network
+    if (newNetwork === 'Sepolia') {
+      setFromToken('SepETH');
+      setToToken('REACT');
+    } else {
+      setFromToken('REACT');
+      setToToken('SepETH');
+    }
+    if (newNetwork === 'Kopli') {
+      setFromToken('REACT');
+      setToToken('SepETH');
+    } else {
+      setFromToken('SepETH');
+      setToToken('REACT');
+    }
+    
+    // Reconnect to the new chain
+    connectWallet();
   };
 
   return (
@@ -627,37 +750,17 @@ export default function App() {
                         <div>
                           <label className={`block text-sm font-medium mb-2 ${theme === 'light' ? 'text-gray-700' : 'text-gray-400'}`}>From Chain</label>
                           <div className="relative">
-                            <select
-                              value={fromChain}
-                              onChange={(e) => {
-                                setFromChain(e.target.value)
-                                setFromToken(tokens[tokenType][e.target.value][0])
-                              }}
-                              className={`w-full ${theme === 'light' ? 'bg-gray-100' : 'bg-gray-800'} rounded-md py-2 px-3 appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500`}
-                            >
-                              {chains.map((chain) => (
-                                <option key={chain} value={chain}>{chainIcons[chain]} {chain}</option>
-                              ))}
-                            </select>
-                            <ChevronDown className={`absolute right-3 top-1/2 transform -translate-y-1/2 ${theme === 'light' ? 'text-gray-600' : 'text-gray-400'}`} size={16} />
+                            <div className={`w-full ${theme === 'light' ? 'bg-gray-100' : 'bg-gray-800'} rounded-md py-2 px-3 appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500`}>
+                              {chainIcons[fromChain]} {fromChain}
+                            </div>
                           </div>
                         </div>
                         <div>
                           <label className={`block text-sm font-medium mb-2 ${theme === 'light' ? 'text-gray-700' : 'text-gray-400'}`}>To Chain</label>
                           <div className="relative">
-                            <select
-                              value={toChain}
-                              onChange={(e) => {
-                                setToChain(e.target.value)
-                                setToToken(tokens[tokenType][e.target.value][0])
-                              }}
-                              className={`w-full ${theme === 'light' ? 'bg-gray-100' : 'bg-gray-800'} rounded-md py-2 px-3 appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500`}
-                            >
-                              {chains.map((chain) => (
-                                <option key={chain} value={chain}>{chainIcons[chain]} {chain}</option>
-                              ))}
-                            </select>
-                            <ChevronDown className={`absolute right-3 top-1/2 transform -translate-y-1/2 ${theme === 'light' ? 'text-gray-600' : 'text-gray-400'}`} size={16} />
+                            <div className={`w-full ${theme === 'light' ? 'bg-gray-100' : 'bg-gray-800'} rounded-md py-2 px-3 appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500`}>
+                              {chainIcons[toChain]} {toChain}
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -670,35 +773,20 @@ export default function App() {
                         <div>
                           <label className={`block text-sm font-medium mb-2 ${theme === 'light' ? 'text-gray-700' : 'text-gray-400'}`}>From Token</label>
                           <div className="relative">
-                            <select
-                              value={fromToken}
-                              onChange={(e) => setFromToken(e.target.value)}
-                              className={`w-full ${theme === 'light' ? 'bg-gray-100' : 'bg-gray-800'} rounded-md py-2 px-3 appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500`}
-                            >
-                              {tokens[tokenType][fromChain].map((token) => (
-                                <option key={token} value={token}>{tokenIcons[token]} {token}</option>
-                              ))}
-                            </select>
-                            <ChevronDown className={`absolute right-3 top-1/2 transform -translate-y-1/2 ${theme === 'light' ? 'text-gray-600' : 'text-gray-400'}`} size={16} />
+                            <div className={`w-full ${theme === 'light' ? 'bg-gray-100' : 'bg-gray-800'} rounded-md py-2 px-3 appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500`}>
+                              {tokenIcons[fromToken]} {fromToken}
+                            </div>
                           </div>
                         </div>
                         <div>
                           <label className={`block text-sm font-medium mb-2 ${theme === 'light' ? 'text-gray-700' : 'text-gray-400'}`}>To Token</label>
                           <div className="relative">
-                            <select
-                              value={toToken}
-                              onChange={(e) => setToToken(e.target.value)}
-                              className={`w-full ${theme === 'light' ? 'bg-gray-100' : 'bg-gray-800'} rounded-md py-2 px-3 appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500`}
-                            >
-                              {tokens[tokenType][toChain].map((token) => (
-                                <option key={token} value={token}>{tokenIcons[token]} {token}</option>
-                              ))}
-                            </select>
-                            <ChevronDown className={`absolute right-3 top-1/2 transform -translate-y-1/2 ${theme === 'light' ? 'text-gray-600' : 'text-gray-400'}`} size={16} />
+                            <div className={`w-full ${theme === 'light' ? 'bg-gray-100' : 'bg-gray-800'} rounded-md py-2 px-3 appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500`}>
+                              {tokenIcons[toToken]} {toToken}
+                            </div>
                           </div>
                         </div>
                       </div>
-
                       <div>
                       <label className={`block text-sm font-medium mb-2 ${theme === 'light' ? 'text-gray-700' : 'text-gray-400'}`}>
                         {tokenType === 'erc721' ? 'NFT ID' : 'Amount'}
@@ -791,6 +879,23 @@ export default function App() {
                     </div>
                   </motion.div>
                 )}
+              </AnimatePresence>
+              <AnimatePresence mode="wait">
+                {activeTab === 'history' && (
+                  <motion.div
+                  key="bridge"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                >
+                  <div className="space-y-6">
+                  <div className="flex justify-center space-x-4 mb-6">
+                  <TransactionHistory />
+                  </div>
+                  </div>
+                  </motion.div>
+               )}
               </AnimatePresence>
             </div>
           </div>
